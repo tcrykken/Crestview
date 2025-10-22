@@ -71,11 +71,11 @@ Description: Shortly describe the changes made to the program
 /*		discount rates perhaps should be 1-occupancy rate*/
 /* 		this is how I arrived at 9 percent */
 /* 		but programmatically, this should follow season or something */
-%let wdisc_c4=0.22	;
+%let wdisc_c4=0.19	;
 %let mdisc_c4=0.33	;
-%let wdisc_c8=0.23	;
+%let wdisc_c8=0.19	;
 %let mdisc_c8=0.33	;
-%let wdisc_su=0.23	;
+%let wdisc_su=0.19	;
 %let mdisc_su=0.33	;
 
 /* 	CLEANING */
@@ -317,6 +317,7 @@ proc sql	;
 /* 			group by  lst_grp */
 /* 		; */
 quit	;
+%put &lst_grp1 &appn1;
 title;
 
 /* 		I COULDNT GET THE RIGHT OUTPUT FOR lstmos AND avg_clean */
@@ -443,6 +444,21 @@ data _NULL_	;
 	call symput('P99',_P99_);
 run	;
 
+proc univariate 
+		data=rentdaylevel 
+			(where=(lst_grp ne 'Elati'))
+		outtable=uni_P_ppn;
+	var P_adj_calppn_;
+	histogram P_adj_calppn_	;
+	CDFPLOT P_adj_calppn_	;
+run	;
+data _NULL_;
+	set uni_P_ppn;
+	call symput('Pppn_P5',_P5_);
+	call symput('Pppn_P95',_P95_);
+run;
+%put &Pppn_P5. &Pppn_P95. ;
+
 proc sql	;
 	create table av_pday_1nite as
 		select distinct
@@ -458,6 +474,19 @@ proc sql	;
 		group by lst_grp, rent_dow
 		order by lst_grp, rent_dow
 	;
+	create table av_pday_1nite_allCrvw as
+		select distinct
+			 rent_dow_n
+			,rent_dow
+			,avg(P_adj_calppn_) as avg_P_adj_calppn_ format percent7.
+			,avg(adj_calppn_) as avg_adj_calppn_ format dollar5.
+			,count(*) as N
+			,std(adj_calppn_) as std_adj_calppn format=5.
+			,compress('('||put(min(adj_calppn_),10.)||','||put(max(adj_calppn_),10.)||')') as minmax_adj_calppn
+		from rentdaylevel (where=(nights=1 and lst_grp ne 'Elati' and P_adj_calppn_ between &Pppn_P5. and &Pppn_P95.))
+		group by rent_dow
+		order by rent_dow
+	;
 quit	;
 
 /* ****************** */
@@ -466,6 +495,12 @@ title 'av_pday_1nite';
 proc sgplot data=av_pday_1nite	;
 	vbar rent_dow /response=avg_P_adj_calppn_ stat=median	;
 run;
+ods proclabel 'av_P_ppn_pday_1nite 5-95 outlier removed, all CRVW'	;
+title 'av_P_ppn_pday_1nite 5-95 outlier removed, all CRVW';
+proc sgplot data=av_pday_1nite_allCrvw	;
+	vbar rent_dow /response=avg_P_adj_calppn_ stat=median	;
+run;
+title;
 
 proc sql	;
 	create table normm as
@@ -499,17 +534,48 @@ proc sql;
 		from sg111
 	;
 quit	;
+/*
+rent_dow	_Mean1_adj_calppn__	avg_P_adj_calppn_
+	1		$93					102%
+	2		$85					93%
+	3		$89					98%
+	4		$89					98%
+	5		$88					97%
+	6		$94					103%
+	7		$101				111%
+*/
 /* ********************** */
 /* ********************** */
 /* 	EO new DOW weight  */
 /* ********************** */
 
-
-
-
-
-
-
+/*	ChatGPT produced weekly trend rates:
+| ---------------------------------------|
+| Day of Week | Percent of Average Price |
+| ----------- | ------------------------ |
+| Monday      | 65%                      |
+| Tuesday     | 62%                      |
+| Wednesday   | 75%                      |
+| Thursday    | 85%                      |
+| Friday      | 100%                     |
+| Saturday    | 110%                     |
+| Sunday      | 90%                      |
+| ---------------------------------------|
+*/
+data av_P_ppn_pwday_cGPT	;
+	input  @1 rent_dow 3. @8 avg_P_adj_calPpn_	;
+	datalines;
+1      .90
+2      .65
+3      .62
+4      .75
+5      .85
+6      1.00
+7      1.1
+	;
+run;
+proc sql;select avg(avg_P_adj_calPpn_) from av_P_ppn_pwday_cGPT;quit;
+proc sql; select .8386*avg_P_adj_calPpn_ as adj, avg_P_adj_calPpn_, rent_dow from av_P_ppn_pwday_cGPT; quit;
 
 proc sql	;
 	create table av_pweekN_byunit as
@@ -627,8 +693,10 @@ data p_pricXdaysout (keep=cal_date pric_multi days_out)	;
 	i=0.89567	;
 	
 	do days_out=1 to 250	;
-		if days_out < 100 then pric_multi=i+a*days_out+a2*days_out**2	;
-		if days_out>= 100 then pric_multi=1	;
+/* 		if days_out < 100 then pric_multi=i+a*days_out+a2*days_out**2	; MOVED TO MAX_MULTIPLIER MODEL from below:*/
+		if days_out < 54 then pric_multi=i+a*days_out+a2*days_out**2	;
+/* 		if days_out>= 100 then pric_multi=1	; */
+		if days_out>= 54 then pric_multi=1.30539284	;
 		cal_date=today()+days_out	;
 		output	;
 	end	;
@@ -685,8 +753,10 @@ proc sql	;
 			 av_pmos_combo as c4
 				on month(d.cal_date) = c4.rent_month
 			left join
-			 av_pday as c3
+			 av_P_ppn_pwday_cGpt as c3
 				on weekday(d.cal_date) = c3.rent_dow
+/* 			 av_pday as c3 */
+/* 				on weekday(d.cal_date) = c3.rent_dow MOVED TO ChatGPT weekday demand*/
 	;
 	create table crvwsuite_future00 as
 		select distinct
@@ -715,8 +785,10 @@ proc sql	;
 			 av_pmos_combo as c4
 				on month(d.cal_date) = c4.rent_month
 			left join
-			 av_pday as c3
+			 av_P_ppn_pwday_cGpt as c3
 				on weekday(d.cal_date) = c3.rent_dow
+/* 			 av_pday as c3 */
+/* 				on weekday(d.cal_date) = c3.rent_dow MOVED TO ChatGPT weekday demand*/
 	;
 	create table crvw8_future00 as
 		select distinct
@@ -745,8 +817,10 @@ proc sql	;
 			 av_pmos_combo as c4
 				on month(d.cal_date) = c4.rent_month
 			left join
-			 av_pday as c3
+			 av_P_ppn_pwday_cGpt as c3
 				on weekday(d.cal_date) = c3.rent_dow
+/* 			 av_pday as c3 */
+/* 				on weekday(d.cal_date) = c3.rent_dow MOVED TO ChatGPT weekday demand*/
 	;
 quit	;
 
@@ -832,6 +906,7 @@ data crvw4_future01	;
 			monthly_disc_rate=.	;
 		end	;
 	calpristr=compress(put(cal_price,5.)||'/'||put(cal_price_daysouttrend,5.)||'/'||put(cal_price_mean,5.))	;
+	calpristr2=compress(put(cal_price,5.)||'/'||put(cal_priceO,5.)||'/'|| put(cal_price_daysouttrend,5.));
 	discount=compress(put(weekly_disc_rate,5.)||'/'||put(monthly_disc_rate,5.)
 				||','||put(week_disc_price,5.)||'/'||put(monthly_disc_price,5.))	;
 run	;
@@ -1057,6 +1132,9 @@ proc transpose
 			(rename=(col1=sta _NAME_=act))	;
 	var _ALL_	;
 run	;
+
+/* this allows more horizontal space within the calendar printout */
+options linesize=200; /*80, 120, 132, 200 are possible*/
 
 ODS PROCLABEL=	'crvw8_future00 combo'	;
 title	"crvw8_future00"	;
