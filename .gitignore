@@ -1,0 +1,32 @@
+# Output files (don't commit results)
+output/*
+!output/.gitkeep
+
+# Data files (don't commit actual data)
+data/raw/*
+data/staging/*
+data/input/*
+data/output/*
+
+!data/samples/
+
+# Keep structure visible
+!*/.gitkeep
+
+# Go
+go/bin/
+*.exe
+
+# Python
+__pycache__/
+*.pyc
+venv/
+
+# SAS
+*.log
+*.lst
+*.sas7bdat
+
+# IDE
+.vscode/
+.DS_Store
