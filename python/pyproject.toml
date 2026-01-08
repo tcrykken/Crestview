@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rental_analytics"
+version = "0.1.0"
+description = "Analytics and financial analysis for a short-term rental business"
+readme = "README.md"
+requires-python = ">=3.9.6"
+
+authors = [
+  { name = "Tim Rykken" }
+]
+
+dependencies = [
+  "pandas",
+  "numpy",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest",
+  "ipython",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
