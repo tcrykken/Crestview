@@ -184,6 +184,14 @@ def check_data_quality(df: pd.DataFrame) -> Dict[str, any]:
         results['date_checks']['max_date'] = valid_dates.max()
         results['date_checks']['date_range_days'] = (valid_dates.max() - valid_dates.min()).days
 
+    # Monthly transaction counts
+    if len(valid_dates) > 0:
+        # Create month-year string (e.g., "2023-01", "2024-12")
+        df_with_dates = df[df['transaction_date'].notna()].copy()
+        df_with_dates['month_year'] = df_with_dates['transaction_date'].dt.to_period('M').astype(str)
+        monthly_counts = df_with_dates['month_year'].value_counts().sort_index().to_dict()
+        results['date_checks']['monthly_transaction_counts'] = monthly_counts
+
     # Amount quality checks
     null_amounts = df['amount'].isna().sum()
     results['amount_checks']['null_amounts'] = null_amounts
@@ -286,6 +294,12 @@ def process_bank_transactions(
             if 'min_date' in dq_results['date_checks']:
                 print(f"Date Range: {dq_results['date_checks']['min_date']} to {dq_results['date_checks']['max_date']}")
                 print(f"Range (days): {dq_results['date_checks'].get('date_range_days', 0):,}")
+
+            # Print monthly transaction counts
+            if 'monthly_transaction_counts' in dq_results['date_checks']:
+                print("\nTransactions per Month:")
+                for month_year, count in dq_results['date_checks']['monthly_transaction_counts'].items():
+                    print(f"  {month_year}: {count:,}")
 
             print("\n--- Amount Quality ---")
             print(f"Null Amounts: {dq_results['amount_checks'].get('null_amounts', 0)}")
