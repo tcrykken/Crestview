@@ -7,6 +7,7 @@ standardizing their formats, and performing data quality checks.
 import pandas as pd
 from typing import Tuple, Dict, List
 import warnings
+import random
 
 
 def standardize_bmo_df(bmo_df: pd.DataFrame) -> pd.DataFrame:
@@ -184,14 +185,6 @@ def check_data_quality(df: pd.DataFrame) -> Dict[str, any]:
         results['date_checks']['max_date'] = valid_dates.max()
         results['date_checks']['date_range_days'] = (valid_dates.max() - valid_dates.min()).days
 
-    # Monthly transaction counts
-    if len(valid_dates) > 0:
-        # Create month-year string (e.g., "2023-01", "2024-12")
-        df_with_dates = df[df['transaction_date'].notna()].copy()
-        df_with_dates['month_year'] = df_with_dates['transaction_date'].dt.to_period('M').astype(str)
-        monthly_counts = df_with_dates['month_year'].value_counts().sort_index().to_dict()
-        results['date_checks']['monthly_transaction_counts'] = monthly_counts
-
     # Amount quality checks
     null_amounts = df['amount'].isna().sum()
     results['amount_checks']['null_amounts'] = null_amounts
@@ -226,6 +219,28 @@ def check_data_quality(df: pd.DataFrame) -> Dict[str, any]:
 
     if duplicate_rows > 0:
         results['warnings'].append(f"{duplicate_rows} duplicate rows found")
+        # Capture one random example set of duplicate records
+        duplicated_mask = df.duplicated(keep=False)  # Mark all duplicates (not just second occurrence)
+        if duplicated_mask.any():
+            # Get all duplicate rows
+            duplicate_rows_df = df[duplicated_mask].copy()
+            
+            # Group by all columns to find duplicate sets (rows with identical values)
+            # This creates groups where each group contains rows that are duplicates of each other
+            grouped = duplicate_rows_df.groupby(list(duplicate_rows_df.columns), dropna=False)
+            
+            # Get all groups that have more than 1 row (actual duplicate sets)
+            duplicate_groups = [group for name, group in grouped if len(group) > 1]
+            
+            # Randomly select one duplicate set
+            if len(duplicate_groups) > 0:
+                random_group = random.choice(duplicate_groups)
+                
+                # Get up to 2 rows from this duplicate set
+                duplicate_example = random_group.head(2)
+                
+                # Convert to dict for easier printing (store as list of dicts)
+                results['duplicate_checks']['example_duplicates'] = duplicate_example.to_dict('records')
 
     # Check for duplicate transaction references within same bank
     if 'transaction_reference' in df.columns:
@@ -257,11 +272,56 @@ def check_data_quality(df: pd.DataFrame) -> Dict[str, any]:
     return results
 
 
+def deduplicate_transactions(df: pd.DataFrame, keep: str = 'first') -> Tuple[pd.DataFrame, int]:
+    """
+    Remove duplicate rows from the transaction dataframe.
+
+    Args:
+        df: Combined bank transaction dataframe
+        keep: Which duplicates to keep - 'first', 'last', or False (drop all)
+
+    Returns:
+        Tuple of (deduplicated_dataframe, number_of_duplicates_removed)
+    """
+    initial_count = len(df)
+    
+    # Remove duplicates, keeping the first occurrence by default
+    deduplicated_df = df.drop_duplicates(keep=keep).reset_index(drop=True)
+    
+    duplicates_removed = initial_count - len(deduplicated_df)
+    
+    return deduplicated_df, duplicates_removed
+
+
+def calculate_monthly_transaction_counts(df: pd.DataFrame) -> Dict[str, int]:
+    """
+    Calculate monthly transaction counts from the dataframe.
+
+    Args:
+        df: Bank transaction dataframe (should be deduplicated)
+
+    Returns:
+        Dictionary mapping month-year strings to transaction counts
+    """
+    valid_dates = df['transaction_date'].dropna()
+    if len(valid_dates) == 0:
+        return {}
+    
+    # Create month-year string (e.g., "2023-01", "2024-12")
+    df_with_dates = df[df['transaction_date'].notna()].copy()
+    df_with_dates['month_year'] = df_with_dates['transaction_date'].dt.to_period('M').astype(str)
+    monthly_counts = df_with_dates['month_year'].value_counts().sort_index().to_dict()
+    
+    return monthly_counts
+
+
 def process_bank_transactions(
     bmo_df: pd.DataFrame,
     botw_df: pd.DataFrame,
     perform_dq_checks: bool = True,
-    verbose: bool = True
+    verbose: bool = True,
+    deduplicate: bool = True,
+    deduplicate_keep: str = 'first'
 ) -> Tuple[pd.DataFrame, Dict[str, any]]:
     """
     Main function to join bank transactions and perform data quality checks.
@@ -271,6 +331,8 @@ def process_bank_transactions(
         botw_df: BotW transaction dataframe
         perform_dq_checks: Whether to perform data quality checks
         verbose: Whether to print DQ check results
+        deduplicate: Whether to remove duplicate rows (default: True)
+        deduplicate_keep: Which duplicates to keep - 'first', 'last', or False (drop all)
 
     Returns:
         Tuple of (combined_dataframe, dq_results_dict)
@@ -278,28 +340,61 @@ def process_bank_transactions(
     # Join the dataframes
     combined_df = join_bank_transactions(bmo_df, botw_df)
 
-    # Perform data quality checks
+    # Perform data quality checks (before deduplication to see original state)
     dq_results = {}
     if perform_dq_checks:
         dq_results = check_data_quality(combined_df)
 
-        if verbose:
+    # Deduplicate if requested
+    duplicates_removed = 0
+    if deduplicate:
+        combined_df, duplicates_removed = deduplicate_transactions(combined_df, keep=deduplicate_keep)
+        dq_results['deduplication'] = {
+            'duplicates_removed': duplicates_removed,
+            'deduplication_applied': True,
+            'keep_strategy': deduplicate_keep,
+            'final_record_count': len(combined_df)
+        }
+    else:
+        dq_results['deduplication'] = {
+            'duplicates_removed': 0,
+            'deduplication_applied': False,
+            'final_record_count': len(combined_df)
+        }
+
+    # Update total records count after deduplication
+    if 'deduplication' in dq_results:
+        dq_results['total_records_after_dedup'] = len(combined_df)
+
+    # Calculate monthly transaction counts on deduplicated dataframe
+    monthly_counts = calculate_monthly_transaction_counts(combined_df)
+    dq_results['monthly_transaction_counts'] = monthly_counts
+
+    if verbose:
             print("=" * 60)
             print("BANK TRANSACTION DATA QUALITY REPORT")
             print("=" * 60)
-            print(f"\nTotal Records: {dq_results['total_records']:,}")
+            print(f"\nTotal Records (before deduplication): {dq_results['total_records']:,}")
+            
+            # Show deduplication results
+            if 'deduplication' in dq_results and dq_results['deduplication']['deduplication_applied']:
+                dup_info = dq_results['deduplication']
+                print(f"Duplicates Removed: {dup_info['duplicates_removed']:,}")
+                print(f"Total Records (after deduplication): {dup_info['final_record_count']:,}")
+            else:
+                print(f"Total Records (no deduplication): {dq_results['total_records']:,}")
+
+            # Print monthly transaction counts (after deduplication)
+            if 'monthly_transaction_counts' in dq_results and dq_results['monthly_transaction_counts']:
+                print("\nTransactions per Month (after deduplication):")
+                for month_year, count in dq_results['monthly_transaction_counts'].items():
+                    print(f"  {month_year}: {count:,}")
 
             print("\n--- Date Quality ---")
             print(f"Null Dates: {dq_results['date_checks'].get('null_dates', 0)}")
             if 'min_date' in dq_results['date_checks']:
                 print(f"Date Range: {dq_results['date_checks']['min_date']} to {dq_results['date_checks']['max_date']}")
                 print(f"Range (days): {dq_results['date_checks'].get('date_range_days', 0):,}")
-
-            # Print monthly transaction counts
-            if 'monthly_transaction_counts' in dq_results['date_checks']:
-                print("\nTransactions per Month:")
-                for month_year, count in dq_results['date_checks']['monthly_transaction_counts'].items():
-                    print(f"  {month_year}: {count:,}")
 
             print("\n--- Amount Quality ---")
             print(f"Null Amounts: {dq_results['amount_checks'].get('null_amounts', 0)}")
@@ -313,8 +408,24 @@ def process_bank_transactions(
                 print(f"{col}: {stats['completeness_pct']:.2f}% complete ({stats['null_count']} nulls)")
 
             print("\n--- Duplicates ---")
-            print(f"Duplicate Rows: {dq_results['duplicate_checks'].get('duplicate_rows', 0)}")
+            print(f"Duplicate Rows (before deduplication): {dq_results['duplicate_checks'].get('duplicate_rows', 0)}")
             print(f"Duplicate References: {dq_results['duplicate_checks'].get('duplicate_references', 0)}")
+            
+            # Show deduplication status
+            if 'deduplication' in dq_results:
+                dup_info = dq_results['deduplication']
+                if dup_info['deduplication_applied']:
+                    print(f"Deduplication Applied: Yes (removed {dup_info['duplicates_removed']:,} duplicates, keep='{dup_info['keep_strategy']}')")
+                else:
+                    print("Deduplication Applied: No")
+            
+            # Print example duplicate records if they exist (these are from before deduplication)
+            if 'example_duplicates' in dq_results['duplicate_checks']:
+                print("\nExample Duplicate Records (before deduplication):")
+                for idx, dup_record in enumerate(dq_results['duplicate_checks']['example_duplicates'], 1):
+                    print(f"  Record {idx}:")
+                    for key, value in dup_record.items():
+                        print(f"    {key}: {value}")
 
             if 'bank_source_distribution' in dq_results['consistency_checks']:
                 print("\n--- Bank Source Distribution ---")
