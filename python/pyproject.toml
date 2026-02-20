@@ -23,6 +23,9 @@ dev = [
   "pytest",
   "ipython",
 ]
+gdrive = [
+  "gdown",
+]
 
 [tool.setuptools]
 package-dir = {"" = "src"}

@@ -4,3 +4,6 @@ numpy
 [dev]
 pytest
 ipython
+
+[gdrive]
+gdown

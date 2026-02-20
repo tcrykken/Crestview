@@ -8,24 +8,18 @@ from rental_analytics.data_access.transaction_categorization import (
     get_category_summary,
 )
 
-def run_pnl(res_df, tx_df, bmo_df, botw_df) -> None:
+def run_pnl(res_df, tx_df, bank_df) -> None:
     """
     Entry point for the PnL analysis given reservation and transaction data.
 
     Args:
         res_df (pd.DataFrame): DataFrame containing reservation data.
         tx_df (pd.DataFrame): DataFrame containing transaction data.
-        bmo_df (pd.DataFrame): DataFrame containing bmo bank transaction data.
-        botw_df (pd.DataFrame): DataFrame containing botw bank transaction data.
+        bank_df (pd.DataFrame): DataFrame containing combined bank transaction data 
+                               (already processed and combined from BMO and BotW).
     """
-    # Process and join bank transactions
-    print("Processing bank transactions...")
-    combined_bank_df, dq_results = process_bank_transactions(
-        bmo_df=bmo_df,
-        botw_df=botw_df,
-        perform_dq_checks=True,
-        verbose=True
-    )
+    # Bank transactions are already processed and combined
+    combined_bank_df = bank_df
 
     # Placeholder for PnL analysis logic
     print("\n" + "="*60)
@@ -92,5 +86,6 @@ def run_pnl(res_df, tx_df, bmo_df, botw_df) -> None:
 
 
 if __name__ == "__main__":
-    res_df, tx_df, bmo_df, botw_df = load_rental_data()
-    run_pnl(res_df, tx_df, bmo_df, botw_df) 
+    from rental_analytics.data_access.loaders import load_staged_data
+    res_df, tx_df, bank_df = load_staged_data()
+    run_pnl(res_df, tx_df, bank_df) 

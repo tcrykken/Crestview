@@ -3,11 +3,14 @@
 __version__ = "0.1.0"
 
 # Main public API - expose commonly used functions/classes
+from rental_analytics.data_access.raw_injestion import load_union_ABBexp, load_union_ABBres
 from rental_analytics.data_access.loaders import load_rental_data
 from rental_analytics.finance.pnl import run_pnl
 from rental_analytics.pipelines.pnl_pipeline import run as run_pipeline
 
 __all__ = [
+    "load_union_ABBexp",
+    "load_union_ABBres",
     "load_rental_data",
     "run_pnl",
     "run_pipeline",

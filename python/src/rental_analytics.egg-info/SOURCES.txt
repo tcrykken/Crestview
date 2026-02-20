@@ -7,8 +7,12 @@ src/rental_analytics.egg-info/dependency_links.txt
 src/rental_analytics.egg-info/requires.txt
 src/rental_analytics.egg-info/top_level.txt
 src/rental_analytics/data_access/__init__.py
+src/rental_analytics/data_access/bank_transactions.py
+src/rental_analytics/data_access/example_bank_transactions.py
+src/rental_analytics/data_access/example_categorization.py
 src/rental_analytics/data_access/loaders.py
 src/rental_analytics/data_access/raw_injestion.py
+src/rental_analytics/data_access/transaction_categorization.py
 src/rental_analytics/finance/__init__.py
 src/rental_analytics/finance/pnl.py
 src/rental_analytics/pipelines/__init__.py

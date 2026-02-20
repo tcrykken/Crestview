@@ -5,17 +5,20 @@ import pytest
 from rental_analytics.pipelines import pnl_pipeline
 from rental_analytics.data_access import loaders
 from rental_analytics.finance import pnl
+from rental_analytics.data_access import bank_transactions
 
 import pandas as pd
 
 class DummyLoader:
     """Dummy context manager to patch load_rental_data for testing."""
-    def __init__(self, res_df, tx_df):
+    def __init__(self, res_df, tx_df, bmo_df, botw_df):
         self.res_df = res_df
         self.tx_df = tx_df
+        self.bmo_df = bmo_df
+        self.botw_df = botw_df
 
     def __call__(self, *args, **kwargs):
-        return self.res_df, self.tx_df
+        return self.res_df, self.tx_df, self.bmo_df, self.botw_df
 
 @pytest.fixture
 def example_data():
@@ -36,29 +39,33 @@ def example_data():
     }
     res_df = pd.DataFrame(res_data)
     tx_df = pd.DataFrame(tx_data)
-    return res_df, tx_df
+    bmo_df = pd.DataFrame({"POSTED DATE": [], "AMOUNT": [], "DESCRIPTION": []})
+    botw_df = pd.DataFrame({})
+    return res_df, tx_df, bmo_df, botw_df
 
 def test_run_pnl(monkeypatch, example_data):
-    res_df, tx_df = example_data
-    # Patch data loader that pnl.run_pnl uses
-    monkeypatch.setattr(loaders, "load_rental_data", DummyLoader(res_df, tx_df))
-    # Capture output: Should not raise, should print reservation and transaction info.
-    pnl.run_pnl(res_df, tx_df)
+    # This test is a lightweight smoke test for the finance entrypoint.
+    # Patch the heavy bank processing dependencies so the test stays fast and stable.
+    res_df, tx_df, bmo_df, botw_df = example_data
+    # Create a dummy combined bank dataframe
+    bank_df = pd.DataFrame({"bank_source": ["BMO", "BotW"], "description": ["Test 1", "Test 2"], "amount": [100.0, -50.0]})
+    monkeypatch.setattr(pnl, "categorize_transactions_df", lambda df, **kwargs: df.assign(category=pd.Series(dtype=object)))
+    monkeypatch.setattr(pnl, "get_category_summary", lambda df, **kwargs: pd.DataFrame())
+    pnl.run_pnl(res_df, tx_df, bank_df)
 
 def test_run_pipeline(monkeypatch, example_data):
-    res_df, tx_df = example_data
-    monkeypatch.setattr(loaders, "load_rental_data", DummyLoader(res_df, tx_df))
-    # Also monkeypatch raw_injestion in case it is called
-    from rental_analytics.data_access import raw_injestion
-    monkeypatch.setattr(raw_injestion, "load_union_ABBexp", lambda: None)
-
-    # Test run function with and without use_raw_injestion
-    pnl_pipeline.run(use_raw_injestion=False)
-    pnl_pipeline.run(use_raw_injestion=True)
+    res_df, tx_df, bmo_df, botw_df = example_data
+    # Mock the new loader functions
+    bank_df = pd.DataFrame({"bank_source": ["BMO"], "description": ["Test"], "amount": [100.0]})
+    monkeypatch.setattr(loaders, "load_raw_bank_files", lambda: (bmo_df, botw_df))
+    monkeypatch.setattr(loaders, "load_staged_data", lambda: (res_df, tx_df, bank_df))
+    monkeypatch.setattr(bank_transactions, "process_bank_transactions", lambda **kwargs: (bank_df, {}))
+    monkeypatch.setattr(pnl, "run_pnl", lambda *args, **kwargs: None)
+    pnl_pipeline.run()
 
 def test_run_main_script(monkeypatch, example_data):
-    res_df, tx_df = example_data
-    monkeypatch.setattr(loaders, "load_rental_data", DummyLoader(res_df, tx_df))
+    res_df, tx_df, bmo_df, botw_df = example_data
+    monkeypatch.setattr(loaders, "load_rental_data", DummyLoader(res_df, tx_df, bmo_df, botw_df))
     from importlib import reload
     # Simulate __main__ execution: reload the module (won't rerun if already imported as main)
     reload(pnl_pipeline)
