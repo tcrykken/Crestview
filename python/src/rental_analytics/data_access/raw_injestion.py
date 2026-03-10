@@ -1,8 +1,6 @@
-"""Raw data ingestion from Google Drive.
+# raw_injestion.py
 
-This module downloads CSV extracts from Google Drive and stacks them together.
-"""
-    
+
 import pandas as pd
 from pathlib import Path
 from typing import List, Optional, Union
@@ -11,6 +9,8 @@ import os
 import re
 from io import StringIO
 import glob
+
+from rental_analytics.utilities.dates import normalize_date_columns_from_config
 
 
 def preprocess_csv(filename: str, encoding: str = 'utf8') -> str:
@@ -99,6 +99,23 @@ def load_union_ABBexp(
             )
             # Capitalize column names (matching legacy behavior)
             df.columns = df.columns.str.title()
+            # Tag with raw source filename
+            df["raw_source_file"] = Path(filename).name
+            # Normalize known Airbnb TXHX date columns before stacking
+            df = normalize_date_columns_from_config(
+                df,
+                config={
+                    "cols": [
+                        "Payout Date",
+                        "Start Date",
+                        "End Date",
+                        "Confirmation Date",
+                    ],
+                    "dayfirst": False,
+                    "yearfirst": True,
+                    "errors": "coerce",
+                },
+            )
             dataframes.append(df)
             print(f"    Loaded {len(df)} rows, {len(df.columns)} columns")
         except Exception as e:
@@ -190,6 +207,23 @@ def load_union_ABBexp_from_files(
             )
             # Capitalize column names (matching legacy behavior)
             df.columns = df.columns.str.title()
+            # Tag with raw source filename
+            df["raw_source_file"] = Path(filename).name
+            # Normalize known Airbnb TXHX date columns before stacking
+            df = normalize_date_columns_from_config(
+                df,
+                config={
+                    "cols": [
+                        "Payout Date",
+                        "Start Date",
+                        "End Date",
+                        "Confirmation Date",
+                    ],
+                    "dayfirst": False,
+                    "yearfirst": True,
+                    "errors": "coerce",
+                },
+            )
             dataframes.append(df)
             print(f"    Loaded {len(df)} rows, {len(df.columns)} columns")
         except Exception as e:
@@ -298,6 +332,24 @@ def load_union_ABBres(
             )
             # Capitalize column names (matching legacy behavior)
             df.columns = df.columns.str.title()
+            # Tag with raw source filename
+            df["raw_source_file"] = Path(filename).name
+            # Normalize known Airbnb reservation date columns before stacking
+            df = normalize_date_columns_from_config(
+                df,
+                config={
+                    "cols": [
+                        "Start Date",
+                        "End Date",
+                        "Checkin",
+                        "Checkout",
+                        "Confirmation Date",
+                    ],
+                    "dayfirst": False,
+                    "yearfirst": True,
+                    "errors": "coerce",
+                },
+            )
             dataframes.append(df)
             print(f"    Loaded {len(df)} rows, {len(df.columns)} columns")
         except Exception as e:

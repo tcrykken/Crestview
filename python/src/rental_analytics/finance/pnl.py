@@ -26,8 +26,44 @@ def run_pnl(res_df, tx_df, bank_df) -> None:
     print("RESERVATION DATA")
     print("="*60)
     print("res_df:")
-    print(res_df.head(3))
+    with pd.option_context(
+        "display.max_columns", None,
+        "display.width", None,
+        "display.max_colwidth", None,
+    ):
+        print(res_df.head(3))
     print(f"Shape: {res_df.shape}")
+
+    # table start_date counts by month by creating a new df that converts Start Date to a datetime object
+    print("\n" + "="*60)
+    print("RESERVATION DATA START DATE")
+    print("="*60)
+    # print(res_df['Start Date'].dt.to_period('M').value_counts) 
+    res_df['Start Date'] = pd.to_datetime(res_df['Start Date'], format='mixed', errors='coerce')
+    with pd.option_context(
+        "display.max_columns", None,
+        "display.width", None,
+        "display.max_colwidth", None,
+    ):
+        print(res_df['Start Date'].dt.to_period('M').value_counts())
+
+    # Group by start date month and count distinct confirmation codes
+    print("\n" + "="*60)
+    print("distinct confirmation codes by start date month")
+    print("="*60)
+    monthly_confirm_counts = (
+        res_df
+        .groupby(res_df['Start Date'].dt.to_period('M'))['Confirmation Code']
+        .nunique()
+        .sort_index()
+    )
+    print("\nDistinct reservation Confirmation Codes per Start Date month:")
+    with pd.option_context(
+        "display.max_rows", None,
+        "display.width", None,
+        "display.max_colwidth", None,
+    ):
+        print(monthly_confirm_counts)
 
     print("\n" + "="*60)
     print("TRANSACTION DATA")
@@ -62,13 +98,13 @@ def run_pnl(res_df, tx_df, bank_df) -> None:
     total_count = len(categorized_df)
     coverage_pct = (categorized_count / total_count * 100) if total_count > 0 else 0
 
-    print(f"\nCategorization Results:")
+    print(f"\nTransaction Categorization Results:")
     print(f"  Total transactions: {total_count:,}")
     print(f"  Categorized: {categorized_count:,} ({coverage_pct:.1f}%)")
     print(f"  Uncategorized: {total_count - categorized_count:,} ({100 - coverage_pct:.1f}%)")
 
     # Show category distribution
-    print("\nCategory Distribution:")
+    print("\nTransactionCategory Distribution:")
     category_counts = categorized_df['category'].value_counts()
     for category, count in category_counts.head(15).items():
         if pd.notna(category):
@@ -77,7 +113,7 @@ def run_pnl(res_df, tx_df, bank_df) -> None:
 
     # Generate and display category summary
     print("\n" + "="*60)
-    print("CATEGORY SUMMARY (for PnL Reporting)")
+    print("Transaction Category Summary (for PnL Reporting)")
     print("="*60)
     summary = get_category_summary(categorized_df)
     print(summary.to_string(index=False))

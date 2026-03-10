@@ -7,6 +7,21 @@ create table rawBMO_playground (amount decimal(10,2));
 insert into rawBMO_playground (amount) select amount from rawBMO;
 
 --
+select max(amount) from rawBMO_playground;
+
+select max(amount), amount_rank,posted_date from (
+    SELECT
+        RANK() OVER (ORDER BY amount) AS amount_rank,
+        amount,
+        posted_date
+    FROM rawBMO_playground) as ad
+group by posted_date;
+
+select
+    posted_date,
+    amount
+from rawBMO_playground
+order by amount asc;
 
 SELECT
     ROW_NUMBER() over (ORDER BY amount) as rn,

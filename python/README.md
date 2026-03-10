@@ -411,6 +411,15 @@ The P&L pipeline follows this workflow:
 
 **Running the Pipeline:**
 
+1. import and call run() directly
+```bash
+python3 -c "from rental_analytics.pipelines.pnl_pipeline import run; run()"
+```
+2. run as a module
+```bash
+python3 -m rental_analytics.pipelines.pnl_pipeline
+```
+3. 
 ```python
 from rental_analytics.pipelines.pnl_pipeline import run
 

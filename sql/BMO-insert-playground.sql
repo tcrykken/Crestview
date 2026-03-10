@@ -2,11 +2,15 @@ drop table if EXISTS 305Analysis.rawBMO_playground;
 
 create table if not exists 305Analysis.rawBMO_playground like 305Analysis.rawBMO;
 
-insert into 305Analysis.rawBMO_playground select * from 305Analysis.rawBMO;
+insert into 305Analysis.rawBMO_playground 
+select * from 305Analysis.rawBMO;
 
-select * from 305Analysis.rawBMO_playground where FI_TRANSACTION_REFERENCE = '' or FI_TRANSACTION_REFERENCE is null;
+select * from 305Analysis.rawBMO_playground 
+where FI_TRANSACTION_REFERENCE = '' or FI_TRANSACTION_REFERENCE is null;
 
-update 305Analysis.rawBMO_playground set TRANSACTION_REFERENCE_NUMBER = UUID() where TRANSACTION_REFERENCE_NUMBER = '' or TRANSACTION_REFERENCE_NUMBER is null;
+update 305Analysis.rawBMO_playground 
+set TRANSACTION_REFERENCE_NUMBER = UUID() 
+where TRANSACTION_REFERENCE_NUMBER = '' or TRANSACTION_REFERENCE_NUMBER is null;
 
 select * from 305Analysis.rawBMO_playground;
 

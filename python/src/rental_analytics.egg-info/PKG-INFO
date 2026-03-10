@@ -64,20 +64,6 @@ To install development dependencies (pytest, ipython):
 pip install -e ".[dev]"
 ```
 
-### 5. Install Google Drive Support (Optional)
-
-To use the Google Drive ingestion functionality:
-
-```bash
-pip install -e ".[gdrive]"
-```
-
-Or install gdown directly:
-
-```bash
-pip install gdown
-```
-
 ### 6. Deactivate the Virtual Environment
 
 When you're done working, deactivate the virtual environment:
@@ -135,6 +121,35 @@ pytest tests/pipelines/test_pnl_pipeline.py::test_run_pnl
 - - Run all tests: 
 ``` bash
 pytest (from the python directory)
+```
+
+## Function Usage
+
+To run an individual function from bash follow below form:
+``` bash
+python3 -c "
+from pathlib import Path
+import pandas as pd
+from rental_analytics.data_access import load_union_ABBexp
+
+df = load_union_ABBexp(
+    local_raw_folder=Path('/Users/a2338-home/Documents/Crestview/305Analysis/data/Raw'),
+    file_patterns=['airbnb_t*', 'airbnb_tax*']
+)
+print(df.head())
+"
+
+python3 -c "
+from pathlib import Path
+import pandas as pd
+from rental_analytics.data_access import load_union_ABBres
+
+df = load_union_ABBres(
+    local_raw_folder=Path('/Users/a2338-home/Documents/Crestview/305Analysis/data/Raw'),
+    file_patterns=['airbnb_res*', '*reservation*', '*rez*', '_ABnB_Res*', '_ABnb_Res*']
+)
+print(df.head())
+"
 ```
 
 ## Transaction Categorization / Crosswalk Tool

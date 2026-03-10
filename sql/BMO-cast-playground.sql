@@ -23,7 +23,11 @@ set string_date = cast(posted_date as char);
 select amount from rawBMO_playground;
 select cast(amount as signed integer) as signed_amount from rawBMO_playground;
 
-select string_date, concat_ws(' ', string_date, '12:00:00') as this, cast(concat_ws(' ', string_date, '12:00:00') as datetime) as spoof_dt from rawBMO_playground;
+select 
+    string_date, 
+    concat_ws(' ', string_date, '12:00:00') as this, 
+    cast(concat_ws(' ', string_date, '12:00:00') as datetime) as spoof_dt 
+from rawBMO_playground;
 
 select 
     (select UUID()) as UUID,

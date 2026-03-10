@@ -3,6 +3,8 @@
 import pandas as pd
 from pathlib import Path
 
+from rental_analytics.utilities.dates import normalize_date_columns_from_config
+
 
 def load_staged_data():
     """
@@ -55,36 +57,89 @@ def load_staged_data():
 def load_raw_bank_files():
     """
     Load raw bank transaction files from data/Raw/.
-    
+
+    Discovers all BMO and BotW CSV files by pattern (BMO*.csv, BotW*.csv, BOTW*.csv),
+    loads and stacks them (with raw_source_file set per file), then returns one
+    BMO dataframe and one BotW dataframe for downstream processing.
+
     These are the source files that get processed and combined into
     data/Staging/combined_bank_transactions.csv by the pipeline.
-    
+
     Returns:
-        bmo_df (pd.DataFrame): DataFrame containing BMO bank transaction data.
-        botw_df (pd.DataFrame): DataFrame containing BotW bank transaction data.
+        bmo_df (pd.DataFrame): DataFrame containing all BMO bank transaction data.
+        botw_df (pd.DataFrame): DataFrame containing all BotW bank transaction data.
     """
-    # Get project root
     project_root = Path(__file__).parent.parent.parent.parent.parent
+    raw_dir = project_root / "data" / "Raw"
 
-    # Raw BMO bank transaction file
-    bmo_file_path = project_root / 'data' / 'Raw' / 'BMO_transactions_202309_202512.csv'
+    if not raw_dir.exists() or not raw_dir.is_dir():
+        raise FileNotFoundError(f"Raw data directory does not exist: {raw_dir}")
 
-    try:
-        bmo_df = pd.read_csv(bmo_file_path, encoding='UTF-8', sep=',')
-    except FileNotFoundError:
-        raise FileNotFoundError(f"Could not find file at path: {bmo_file_path}")
-    except Exception as e:
-        raise RuntimeError(f"Failed to load CSV from {bmo_file_path}: {e}")
+    all_raw_csvs = list(raw_dir.glob("*.csv"))
 
-    # Raw BotW bank transaction file
-    botw_file_path = project_root / 'data' / 'Raw' / 'BotW_FSF_TX_full_join_27JAN24.csv'
+    # Discover BMO files (case-insensitive: BMO, bmo, Bmo_..., etc.)
+    bmo_paths = sorted(p for p in all_raw_csvs if p.name.upper().startswith("BMO"))
+    if not bmo_paths:
+        raise FileNotFoundError(
+            f"No BMO CSV files found in {raw_dir}. Expecting files matching BMO*.csv"
+        )
 
-    try:
-        botw_df = pd.read_csv(botw_file_path)
-    except FileNotFoundError:
-        raise FileNotFoundError(f"Could not find file at path: {botw_file_path}")
-    except Exception as e:
-        raise RuntimeError(f"Failed to load CSV from {botw_file_path}: {e}")
+    bmo_dfs = []
+    for bmo_file_path in bmo_paths:
+        try:
+            df = pd.read_csv(bmo_file_path, encoding="UTF-8", sep=",")
+        except Exception as e:
+            raise RuntimeError(f"Failed to load CSV from {bmo_file_path}: {e}") from e
+        df["raw_source_file"] = bmo_file_path.name
+        df = normalize_date_columns_from_config(
+            df,
+            config={
+                "cols": [
+                    "Date",
+                    "Posting Date",
+                    "POSTED DATE",
+                ],
+                "dayfirst": False,
+                "yearfirst": True,
+                "errors": "coerce",
+            },
+        )
+        bmo_dfs.append(df)
+
+    bmo_df = pd.concat(bmo_dfs, axis=0, ignore_index=True, sort=False)
+
+    # Discover BotW files (case-insensitive: BotW, BOTW, botw, BOTW_tx_..., BOTW_txhx_..., etc.)
+    botw_paths = sorted(
+        p for p in all_raw_csvs if p.name.upper().startswith("BOTW")
+    )
+    if not botw_paths:
+        raise FileNotFoundError(
+            f"No BotW CSV files found in {raw_dir}. Expecting files matching BotW*.csv or BOTW*.csv"
+        )
+
+    botw_dfs = []
+    for botw_file_path in botw_paths:
+        try:
+            df = pd.read_csv(botw_file_path)
+        except Exception as e:
+            raise RuntimeError(f"Failed to load CSV from {botw_file_path}: {e}") from e
+        df["raw_source_file"] = botw_file_path.name
+        df = normalize_date_columns_from_config(
+            df,
+            config={
+                "cols": [
+                    "Post Date",
+                    "Trans Date",
+                    "Date",
+                ],
+                "dayfirst": False,
+                "yearfirst": True,
+                "errors": "coerce",
+            },
+        )
+        botw_dfs.append(df)
+
+    botw_df = pd.concat(botw_dfs, axis=0, ignore_index=True, sort=False)
 
     return bmo_df, botw_df
 

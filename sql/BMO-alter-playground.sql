@@ -30,7 +30,8 @@ add constraint chk_amount check (amount > -10000);
 alter table 305Analysis.rawBMO_playground
 add constraint fk_trxn_id foreign key (TRANSACTION_REFERENCE_NUMBER) references othertable (othertabletransactionreferencenumber);
 
-alter table 305Analysis.rawBMO_playground add constraint unique_txn_id unique (TRANSACTION_REFERENCE_NUMBER);
+alter table 305Analysis.rawBMO_playground 
+add constraint unique_txn_id unique (TRANSACTION_REFERENCE_NUMBER);
 
 show create table 305Analysis.rawBMO_playground;
 
