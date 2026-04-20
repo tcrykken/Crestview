@@ -137,130 +137,41 @@ print(df.head())
 "
 ```
 
-## Transaction Categorization / Crosswalk Tool
 
-The transaction categorization module provides tools to categorize bank transactions using crosswalk reference files and export finalized crosswalks.
+## Transaction Categorization Integration
 
-### Features
+The pipeline now automatically categorizes all bank transactions using the latest crosswalks before exporting `combined_bank_transactions.csv`. The `category` column is included in the output.
 
-- **Normalized Pattern Matching**: Automatically matches patterns regardless of spacing and case (e.g., "DIRECTDEBITCODEPTREVENUETAXPAYMENT" matches "Direct Debit COD EPT Revenue Tax Payment")
-- **Multi-Bank Support**: Combines crosswalks from multiple banks (BMO, BotW)
-- **Unknown Pattern Detection**: Identifies transactions without categories
-- **Interactive Categorization**: Prompts user in terminal (zsh/bash/etc.) to categorize unknown patterns with options to assign, skip, or view existing categories
-- **Auto-Save**: Automatically saves crosswalk after each categorization during interactive mode
-- **CSV Export**: Exports finalized crosswalks to `data/output/`
+- Crosswalks are loaded and combined automatically.
+- The crosswalk tool can still be used independently to update or export crosswalks (see below).
+- To interactively categorize unknown patterns, use the crosswalk tool as before.
 
-### Running the Crosswalk Tool
+**No extra steps are needed to ensure categorized output in the main pipeline.**
 
-#### Option 1: Run the Script Directly
+### Running the Crosswalk Tool (Advanced/Interactive)
 
-From the `python` directory (with venv activated):
+You can still use the crosswalk tool for interactive or programmatic management of crosswalks and unknown patterns. See the [Transaction Categorization / Crosswalk Tool](#) section in previous versions for details.
 
-```bash
-python src/rental_analytics/data_access/transaction_categorization.py
-```
-
-This will:
-- Load all crosswalk files from `data/reference/`
-- Combine them into a unified mapping
-- Test normalized matching with sample descriptions
-- Export a finalized crosswalk CSV to `data/output/finalized_crosswalk.csv`
-
-#### Option 2: Interactive Categorization (Recommended for Unknown Patterns)
-
-The interactive mode prompts you in the terminal (works in zsh, bash, or any shell) to categorize unknown patterns as they're encountered:
-
-```python
-from rental_analytics.data_access.transaction_categorization import (
-    categorize_transactions_df,
-    interactively_categorize_unknowns
-)
-
-# First, categorize transactions (this will leave some as None/unknown)
-categorized_df = categorize_transactions_df(
-    transactions_df,
-    description_col='description',
-    bank_source_col='bank_source'
-)
-
-# Then interactively categorize the unknowns
-updated_crosswalk = interactively_categorize_unknowns(
-    categorized_df,
-    description_col='description',
-    bank_source_col='bank_source',
-    category_col='category',
-    auto_save=True,  # Auto-saves after each assignment
-    show_existing_categories=True  # Shows existing categories for reference
-)
-```
-
-**Interactive Commands:**
-- Enter a category name to assign it to the pattern
-- Type `skip` or `s` to skip this pattern (leaves as UNKNOWN)
-- Type `list` or `l` to see all existing categories
-- Type `quit` or `q` to stop and save progress
-
-The tool works in any shell (zsh, bash, etc.) using Python's built-in `input()` function - no special shell configuration needed.
-
-#### Option 3: Use Programmatically (Non-Interactive)
-
-Import and use the functions in your Python code:
-
-```python
-from rental_analytics.data_access.transaction_categorization import (
-    combine_crosswalks,
-    categorize_transactions_df,
-    add_unknown_patterns,
-    export_finalized_crosswalk
-)
-
-# Load and combine crosswalks
+``` bash
+python -i -c "
+import pandas as pd
+from rental_analytics.data_access.transaction_categorization import combine_crosswalks, categorize_transactions_df, interactively_categorize_unknowns, export_finalized_crosswalk
+df = pd.read_csv('/Users/a2338-home/Documents/Crestview/305Analysis/data/Staging/combined_bank_transactions.csv')
 crosswalks_df = combine_crosswalks()
-
-# Categorize transactions (with normalized matching)
-categorized_df = categorize_transactions_df(
-    transactions_df,
-    description_col='description',
-    bank_source_col='bank_source'
-)
-
-# Add unknown patterns to crosswalk (non-interactive, marks as UNKNOWN)
-updated_crosswalk = add_unknown_patterns(
-    categorized_df,
-    description_col='description',
-    category_col='category',
-    crosswalks_df=crosswalks_df
-)
-
-# Export finalized crosswalk
-export_path = export_finalized_crosswalk(
-    updated_crosswalk,
-    filename='finalized_crosswalk.csv',
-    include_bank_source=True
-)
-print(f"Exported to: {export_path}")
+categorized_df = categorize_transactions_df(df, crosswalks_df=crosswalks_df)
+updated_crosswalk = interactively_categorize_unknowns(categorized_df, crosswalks_df=crosswalks_df, auto_save=True, show_existing_categories=True)
+export_finalized_crosswalk(updated_crosswalk, include_bank_source=True)
+"
 ```
 
 ### Output Location
 
-The finalized crosswalk CSV is exported to:
-```
-data/output/finalized_crosswalk.csv
-```
+- The finalized crosswalk CSV is exported to:
+  - `data/output/finalized_crosswalk.csv`
+- The categorized combined bank transactions are exported to:
+  - `data/Staging/combined_bank_transactions.csv`
 
-The output directory is created automatically if it doesn't exist.
-
-### Crosswalk File Format
-
-The tool expects crosswalk files in `data/reference/` with the following structure:
-- **BMO**: `BMO 2024 tx cat xwalk.csv`
-- **BotW**: `BotW desc cat xwalk.csv` and `BotW desc cat xwalk_2023Partnership.csv`
-
-Each crosswalk file should have columns:
-- `search_pattern`: The pattern to match (can be space-stripped, uppercase)
-- `category`: The category to assign when pattern matches
-
-The tool normalizes both patterns and transaction descriptions (removes spaces, converts to uppercase) for matching, so patterns like "DIRECTDEBITCODEPTREVENUETAXPAYMENT" will match descriptions with any spacing or case.
+The output directories are created automatically if they don't exist.
 
 ## Google Drive Data Ingestion
 
@@ -394,7 +305,7 @@ If you frequently switch between Google accounts, **service accounts are the bes
 The P&L pipeline follows this workflow:
 
 1. **Loads raw bank files** from `data/Raw/` (BMO and BotW CSV files)
-2. **Processes and combines** bank transactions (standardizes, deduplicates, performs DQ checks)
+2. **Processes and combines** bank transactions (standardizes, deduplicates, performs DQ checks), then—if `data/Raw/bmoDailyBalance.csv` exists—joins **input_balance** and computes **running_balance** (see below)
 3. **Saves combined bank transactions** to `data/Staging/combined_bank_transactions.csv`
 4. **Loads all staged files** from `data/Staging/`:
    - `ABB_stackres_00py.csv` (Airbnb reservations)
@@ -408,6 +319,86 @@ The P&L pipeline follows this workflow:
   - `ABB_stackres_00py.csv`
   - `ABB_stackTXHX_00py.csv`
   - `combined_bank_transactions.csv`
+
+### Debugging load for raw bank files example zsh command
+``` bash
+python3 -c "
+from pathlib import Path
+from rental_analytics.data_access.loaders import load_raw_bank_files
+load_raw_bank_files()
+```
+
+### Combined bank staging: `input_balance` and `running_balance`
+
+After BMO and BotW raw files are stacked and **deduplicated**, the pipeline optionally enriches `combined_bank_transactions.csv` using `data/Raw/bmoDailyBalance.csv`.
+
+**`bmoDailyBalance.csv` (required columns)**
+
+- **date** — posted date for the row (column name can also be `posted date`, `post date`, or `transaction date`).
+- **balance** — ledger balance for that line (aliases: `running balance`, `ledger balance`, `ending balance`).
+- **ref** — must match the **exact transaction description** after standardization (`description` in the combined file): i.e. BMO export **DESCRIPTION** or BotW **Description**. A fallback header **reference** is accepted. This is **not** the BMO “FI TRANSACTION REFERENCE” column; that field is not used for this join.
+
+**Join rule**
+
+- Match on **calendar date** (normalized) **and** stripped string equality: `transaction_date` (date part) + `description` = `date` + `ref`.
+- Applies to **all rows** (BMO and BotW). Any row whose description and date appear in the daily balance file gets **input_balance** populated.
+
+**Date alignment (BMO export vs `bmoDailyBalance`)**
+
+- Both sides use the same helper: `format="mixed"` parsing, then **midnight-normalized** naive datetimes so only the calendar day is compared.
+- BMO **POSTED DATE** values like `1/5/2026` (no leading zeros) are supported; the old strict `MM/DD/YYYY` parser could turn those into null dates and break the join even when `ref` matched.
+- Daily balance `date` cells can be ISO (`2026-01-05`), `M/D/YYYY`, or **numeric Excel serial days**; the file is read with `utf-8-sig` so a BOM does not corrupt the first header.
+- If either side is timezone-aware, it is converted to UTC, normalized to a calendar day, then stored without timezone so merge keys line up.
+
+**`running_balance`**
+
+- Computed on the **full** deduplicated combined dataframe, sorted by `transaction_date`, then `bank_source`, then original row order.
+- Rows with **input_balance** anchor the chain (balance after that transaction, consistent with the daily balance export). Rows without a match extend the chain with **amount**; rows before the first anchor are back-filled from that anchor when possible.
+
+If `bmoDailyBalance.csv` is missing, `input_balance` and `running_balance` are still written as columns filled with NaN so the staging schema stays stable.
+
+**Example zsh commands**
+
+Rebuild the combined bank file and print sample columns (adjust `root` if your clone lives elsewhere):
+
+```bash
+cd /Users/a2338-home/Documents/Crestview/305Analysis/python
+source venv/bin/activate
+python3 -c "
+from pathlib import Path
+from rental_analytics.data_access.loaders import load_raw_bank_files
+from rental_analytics.data_access.bank_transactions import process_bank_transactions
+
+root = Path('/Users/a2338-home/Documents/Crestview/305Analysis')
+raw = root / 'data' / 'Raw'
+bmo, botw = load_raw_bank_files()
+df, dq = process_bank_transactions(
+    bmo, botw,
+    perform_dq_checks=False,
+    verbose=True,
+    raw_folder=raw,
+)
+print(df[['transaction_date', 'bank_source', 'description', 'amount', 'input_balance', 'running_balance']].head(20))
+print('matched input_balance rows:', df['input_balance'].notna().sum())
+out = root / 'data' / 'Staging' / 'combined_bank_transactions.csv'
+df.to_csv(out, index=False)
+print('wrote', out)
+"
+```
+
+Quick check that the staging file has the new columns:
+
+```bash
+head -1 /Users/a2338-home/Documents/Crestview/305Analysis/data/Staging/combined_bank_transactions.csv
+```
+
+Run the full P&L pipeline (same staging write + Airbnb loads + `run_pnl`):
+
+```bash
+cd /Users/a2338-home/Documents/Crestview/305Analysis/python
+source venv/bin/activate
+python3 -m rental_analytics.pipelines.pnl_pipeline
+```
 
 **Running the Pipeline:**
 

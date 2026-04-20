@@ -80,6 +80,8 @@ def run_pnl(res_df, tx_df, bank_df) -> None:
     print(f"Shape: {combined_bank_df.shape}")
     print(f"\nBank source distribution:")
     print(combined_bank_df['bank_source'].value_counts())
+    # debug, remove, check columns in combined_bank_df
+    print(f"\nCombined bank df columns: {combined_bank_df.columns.tolist()}")
 
     # Categorize transactions
     print("\n" + "="*60)

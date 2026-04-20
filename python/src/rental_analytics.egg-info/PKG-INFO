@@ -409,7 +409,7 @@ If you frequently switch between Google accounts, **service accounts are the bes
 The P&L pipeline follows this workflow:
 
 1. **Loads raw bank files** from `data/Raw/` (BMO and BotW CSV files)
-2. **Processes and combines** bank transactions (standardizes, deduplicates, performs DQ checks)
+2. **Processes and combines** bank transactions (standardizes, deduplicates, performs DQ checks), then—if `data/Raw/bmoDailyBalance.csv` exists—joins **input_balance** and computes **running_balance** (see below)
 3. **Saves combined bank transactions** to `data/Staging/combined_bank_transactions.csv`
 4. **Loads all staged files** from `data/Staging/`:
    - `ABB_stackres_00py.csv` (Airbnb reservations)
@@ -424,8 +424,97 @@ The P&L pipeline follows this workflow:
   - `ABB_stackTXHX_00py.csv`
   - `combined_bank_transactions.csv`
 
+### Debugging load for raw bank files example zsh command
+``` bash
+python3 -c "
+from pathlib import Path
+from rental_analytics.data_access.loaders import load_raw_bank_files
+load_raw_bank_files()
+```
+
+### Combined bank staging: `input_balance` and `running_balance`
+
+After BMO and BotW raw files are stacked and **deduplicated**, the pipeline optionally enriches `combined_bank_transactions.csv` using `data/Raw/bmoDailyBalance.csv`.
+
+**`bmoDailyBalance.csv` (required columns)**
+
+- **date** — posted date for the row (column name can also be `posted date`, `post date`, or `transaction date`).
+- **balance** — ledger balance for that line (aliases: `running balance`, `ledger balance`, `ending balance`).
+- **ref** — must match the **exact transaction description** after standardization (`description` in the combined file): i.e. BMO export **DESCRIPTION** or BotW **Description**. A fallback header **reference** is accepted. This is **not** the BMO “FI TRANSACTION REFERENCE” column; that field is not used for this join.
+
+**Join rule**
+
+- Match on **calendar date** (normalized) **and** stripped string equality: `transaction_date` (date part) + `description` = `date` + `ref`.
+- Applies to **all rows** (BMO and BotW). Any row whose description and date appear in the daily balance file gets **input_balance** populated.
+
+**Date alignment (BMO export vs `bmoDailyBalance`)**
+
+- Both sides use the same helper: `format="mixed"` parsing, then **midnight-normalized** naive datetimes so only the calendar day is compared.
+- BMO **POSTED DATE** values like `1/5/2026` (no leading zeros) are supported; the old strict `MM/DD/YYYY` parser could turn those into null dates and break the join even when `ref` matched.
+- Daily balance `date` cells can be ISO (`2026-01-05`), `M/D/YYYY`, or **numeric Excel serial days**; the file is read with `utf-8-sig` so a BOM does not corrupt the first header.
+- If either side is timezone-aware, it is converted to UTC, normalized to a calendar day, then stored without timezone so merge keys line up.
+
+**`running_balance`**
+
+- Computed on the **full** deduplicated combined dataframe, sorted by `transaction_date`, then `bank_source`, then original row order.
+- Rows with **input_balance** anchor the chain (balance after that transaction, consistent with the daily balance export). Rows without a match extend the chain with **amount**; rows before the first anchor are back-filled from that anchor when possible.
+
+If `bmoDailyBalance.csv` is missing, `input_balance` and `running_balance` are still written as columns filled with NaN so the staging schema stays stable.
+
+**Example zsh commands**
+
+Rebuild the combined bank file and print sample columns (adjust `root` if your clone lives elsewhere):
+
+```bash
+cd /Users/a2338-home/Documents/Crestview/305Analysis/python
+source venv/bin/activate
+python3 -c "
+from pathlib import Path
+from rental_analytics.data_access.loaders import load_raw_bank_files
+from rental_analytics.data_access.bank_transactions import process_bank_transactions
+
+root = Path('/Users/a2338-home/Documents/Crestview/305Analysis')
+raw = root / 'data' / 'Raw'
+bmo, botw = load_raw_bank_files()
+df, dq = process_bank_transactions(
+    bmo, botw,
+    perform_dq_checks=False,
+    verbose=True,
+    raw_folder=raw,
+)
+print(df[['transaction_date', 'bank_source', 'description', 'amount', 'input_balance', 'running_balance']].head(20))
+print('matched input_balance rows:', df['input_balance'].notna().sum())
+out = root / 'data' / 'Staging' / 'combined_bank_transactions.csv'
+df.to_csv(out, index=False)
+print('wrote', out)
+"
+```
+
+Quick check that the staging file has the new columns:
+
+```bash
+head -1 /Users/a2338-home/Documents/Crestview/305Analysis/data/Staging/combined_bank_transactions.csv
+```
+
+Run the full P&L pipeline (same staging write + Airbnb loads + `run_pnl`):
+
+```bash
+cd /Users/a2338-home/Documents/Crestview/305Analysis/python
+source venv/bin/activate
+python3 -m rental_analytics.pipelines.pnl_pipeline
+```
+
 **Running the Pipeline:**
 
+1. import and call run() directly
+```bash
+python3 -c "from rental_analytics.pipelines.pnl_pipeline import run; run()"
+```
+2. run as a module
+```bash
+python3 -m rental_analytics.pipelines.pnl_pipeline
+```
+3. 
 ```python
 from rental_analytics.pipelines.pnl_pipeline import run
 

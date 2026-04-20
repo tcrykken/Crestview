@@ -10,7 +10,10 @@ import re
 from io import StringIO
 import glob
 
-from rental_analytics.utilities.dates import normalize_date_columns_from_config
+from rental_analytics.utilities.dates import (
+    normalize_date_columns_from_config,
+    raw_file_creation_date,
+)
 
 
 def preprocess_csv(filename: str, encoding: str = 'utf8') -> str:
@@ -99,8 +102,10 @@ def load_union_ABBexp(
             )
             # Capitalize column names (matching legacy behavior)
             df.columns = df.columns.str.title()
-            # Tag with raw source filename
-            df["raw_source_file"] = Path(filename).name
+            # Tag with raw source filename and file creation date from metadata
+            src_path = Path(filename)
+            df["raw_source_file"] = src_path.name
+            df["raw_source_file_created_date"] = raw_file_creation_date(src_path)
             # Normalize known Airbnb TXHX date columns before stacking
             df = normalize_date_columns_from_config(
                 df,
@@ -207,8 +212,10 @@ def load_union_ABBexp_from_files(
             )
             # Capitalize column names (matching legacy behavior)
             df.columns = df.columns.str.title()
-            # Tag with raw source filename
-            df["raw_source_file"] = Path(filename).name
+            # Tag with raw source filename and file creation date from metadata
+            src_path = Path(filename)
+            df["raw_source_file"] = src_path.name
+            df["raw_source_file_created_date"] = raw_file_creation_date(src_path)
             # Normalize known Airbnb TXHX date columns before stacking
             df = normalize_date_columns_from_config(
                 df,
@@ -332,8 +339,10 @@ def load_union_ABBres(
             )
             # Capitalize column names (matching legacy behavior)
             df.columns = df.columns.str.title()
-            # Tag with raw source filename
-            df["raw_source_file"] = Path(filename).name
+            # Tag with raw source filename and file creation date from metadata
+            src_path = Path(filename)
+            df["raw_source_file"] = src_path.name
+            df["raw_source_file_created_date"] = raw_file_creation_date(src_path)
             # Normalize known Airbnb reservation date columns before stacking
             df = normalize_date_columns_from_config(
                 df,
@@ -379,3 +388,31 @@ def load_union_ABBres(
     print(f"\n✓ Output written to: {output_file}")
     
     return combined_df
+
+
+def load_dailyBalance(
+    local_raw_folder: Path,
+    file: str = 'bmoDailyBalance.csv',
+    encoding: str = 'utf8'
+) -> pd.DataFrame:
+    """
+    Load and stack BMO daily balance CSV file from a local folder.
+    
+    This function reads a CSV file from a local directory, loads it, and returns a dataframe.
+    
+    Args:
+        local_raw_folder: Path to local folder containing the CSV file.
+        file: Name of the CSV file to load (default: 'bmoDailyBalance.csv')
+        encoding: File encoding to use when reading CSVs (default: 'utf8')
+    """
+    raw_folder = Path(local_raw_folder)
+
+    df = pd.read_csv(raw_folder / file, encoding=encoding)
+
+    print(f"{file}:")
+    print(df.head())
+    df.info()
+    for col in ("date", "balance", "ref", "ref_amount"):
+        if col in df.columns:
+            print(f"{col}:\n{df[col].head()}")
+    return df

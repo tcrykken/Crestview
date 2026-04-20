@@ -4,10 +4,83 @@ This module handles joining BMO and BotW bank transaction dataframes,
 standardizing their formats, and performing data quality checks.
 """
 
-import pandas as pd
-from typing import Tuple, Dict, List
-import warnings
+from __future__ import annotations
+
 import random
+import warnings
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+import numpy as np
+import pandas as pd
+
+
+def deduplicate_transactions_with_tracing(df: pd.DataFrame, trace=True):
+    """
+    Deduplicate transactions, keeping the oldest record by raw_source_file_created_date, with tracing.
+    Args:
+        df: DataFrame of transactions
+        trace: If True, print trace logs
+    Returns:
+        Deduplicated DataFrame
+    """
+    df = df.copy()
+    # Prepare deduplication keys
+    df['amount_rounded'] = pd.to_numeric(df['amount'], errors='coerce').round()
+    df['description_substr'] = df['description'].fillna('').astype(str).str[:30]
+    df['raw_source_file_created_date'] = pd.to_datetime(df['raw_source_file_created_date'], errors='coerce')
+
+    key_columns = ['transaction_date', 'amount_rounded', 'description_substr']
+
+    # Sort so oldest file comes first
+    df = df.sort_values(by=key_columns + ['raw_source_file_created_date'], ascending=True)
+
+    # Find duplicates before dropping
+    duplicate_mask = df.duplicated(subset=key_columns, keep=False)
+    duplicates = df[duplicate_mask]
+
+    if trace:
+        print(f"[TRACE] Found {duplicates.shape[0]} duplicate rows (by {key_columns})")
+        if not duplicates.empty:
+            print("[TRACE] Example duplicate group:")
+            # debug, delete comment below if it is not printing full dup rows to terminal - looks like this does print all records ... idk
+            # print(duplicates.groupby(key_columns).head(2).to_string(index=False))
+
+    # Drop duplicates, keeping the oldest (first after sort)
+    deduped = df.drop_duplicates(subset=key_columns, keep='first')
+
+    if trace:
+        print(f"[TRACE] Deduplicated: {df.shape[0] - deduped.shape[0]} rows removed. Final shape: {deduped.shape}")
+
+    # Optionally, drop helper columns before returning
+    return deduped.drop(columns=['amount_rounded', 'description_substr'])
+
+
+def _parse_to_normalized_calendar_dates(series: pd.Series) -> pd.Series:
+    """
+    Parse heterogeneous date values to timezone-naive datetimes at midnight (calendar day).
+
+    Used so ``bmoDailyBalance`` ``date`` values align with ``transaction_date`` from
+    BMO/BotW exports (e.g. ISO ``2026-01-05``, ``M/D/YYYY`` with or without zero-padding,
+    and numeric Excel serial days from spreadsheet exports).
+
+    Merge keys compare these normalized timestamps; only the calendar date matters.
+    """
+    s = series
+    if pd.api.types.is_numeric_dtype(s):
+        num = pd.to_numeric(s, errors="coerce")
+        from_excel = pd.to_datetime(num, unit="D", origin="1899-12-30", errors="coerce")
+        from_mixed = pd.to_datetime(s, errors="coerce", format="mixed")
+        out = from_excel.where(from_excel.notna(), from_mixed)
+    else:
+        out = pd.to_datetime(s, errors="coerce", format="mixed")
+
+    # Timezone-aware values: normalize in UTC then drop tz for stable merge keys
+    if getattr(out.dtype, "tz", None) is not None:
+        out = out.dt.tz_convert("UTC").dt.normalize().dt.tz_localize(None)
+        return out
+
+    return out.dt.normalize()
 
 
 def standardize_bmo_df(bmo_df: pd.DataFrame) -> pd.DataFrame:
@@ -25,9 +98,9 @@ def standardize_bmo_df(bmo_df: pd.DataFrame) -> pd.DataFrame:
     # Standardize column names (handle spaces)
     df.columns = df.columns.str.strip()
 
-    # Convert POSTED DATE to datetime
+    # Convert POSTED DATE to datetime (mixed formats: 01/05/2026, 1/5/2026, ISO, etc.)
     if 'POSTED DATE' in df.columns:
-        df['transaction_date'] = pd.to_datetime(df['POSTED DATE'], format='%m/%d/%Y', errors='coerce')
+        df['transaction_date'] = _parse_to_normalized_calendar_dates(df['POSTED DATE'])
     else:
         raise ValueError("BMO dataframe missing 'POSTED DATE' column")
 
@@ -42,6 +115,7 @@ def standardize_bmo_df(bmo_df: pd.DataFrame) -> pd.DataFrame:
     df['description'] = df.get('DESCRIPTION', '')
     df['currency'] = df.get('CURRENCY', 'USD')
     df['transaction_reference'] = df.get('TRANSACTION REFERENCE NUMBER', '')
+
     df['transaction_type'] = df.get('TYPE', '')
     df['credit_debit'] = df.get('CREDIT/DEBIT', '')
 
@@ -67,16 +141,16 @@ def standardize_botw_df(botw_df: pd.DataFrame) -> pd.DataFrame:
     # Standardize column names
     df.columns = df.columns.str.strip()
 
-    # Convert Date to datetime
+    # Convert Date to datetime (same calendar-day normalization as BMO / daily balance)
     if 'Date' in df.columns:
-        df['transaction_date'] = pd.to_datetime(df['Date'], errors='coerce')
+        df['transaction_date'] = _parse_to_normalized_calendar_dates(df['Date'])
     else:
         raise ValueError("BotW dataframe missing 'Date' column")
 
     # Handle Debit and Credit columns (may have $ signs)
     if 'Debit' in df.columns:
         df['debit_amount'] = df['Debit'].astype(str).str.replace('$', '').str.replace(',', '')
-        df['debit_amount'] = pd.to_numeric(df['debit_amount'], errors='coerce').fillna(0)
+        df['debit_amount'] = pd.to_numeric(df['debit_amount'], errors='coerce').abs().fillna(0)
     else:
         df['debit_amount'] = 0
 
@@ -127,6 +201,10 @@ def join_bank_transactions(bmo_df: pd.DataFrame, botw_df: pd.DataFrame) -> pd.Da
         'transaction_reference',
         'transaction_type',
         'credit_debit',
+        'raw_source_file',
+        'raw_source_file_created_date',
+        'input_balance',
+        'running_balance',
     ]
 
     # Ensure all columns exist in both dataframes
@@ -149,7 +227,7 @@ def join_bank_transactions(bmo_df: pd.DataFrame, botw_df: pd.DataFrame) -> pd.Da
     return combined_df
 
 
-def check_data_quality(df: pd.DataFrame) -> Dict[str, any]:
+def check_data_quality(df: pd.DataFrame) -> Dict[str, Any]:
     """
     Perform comprehensive data quality checks on bank transaction dataframe.
 
@@ -293,6 +371,77 @@ def deduplicate_transactions(df: pd.DataFrame, keep: str = 'first') -> Tuple[pd.
     return deduplicated_df, duplicates_removed
 
 
+def load_bmo_daily_balance_merge_table(
+    raw_folder: Path,
+    file_name: str = "bmoDailyBalance.csv",
+) -> Optional[pd.DataFrame]:
+    """
+    Load ``bmoDailyBalance.csv`` and return a deduplicated merge table:
+    ``(posted date, ref) -> input_balance``.
+
+    The ``ref`` column must match the **transaction description** in the combined file
+    (BMO ``DESCRIPTION`` / BotW ``Description``, standardized as ``description``), on
+    the same **calendar date** as the balance row's ``date``. Dates are parsed with the
+    same rules as transaction posted dates (``_parse_to_normalized_calendar_dates``):
+    mixed string formats, optional Excel serial numbers, then normalized to midnight
+    naive datetimes for an exact merge key match.
+    """
+    path = Path(raw_folder) / file_name
+    if not path.is_file():
+        return None
+
+    df = pd.read_csv(path, encoding="utf-8-sig")
+    df.columns = [str(c).strip() for c in df.columns]
+    lower = {c.lower(): c for c in df.columns}
+
+    def col(*candidates: str) -> Optional[str]:
+        for name in candidates:
+            if name.lower() in lower:
+                return lower[name.lower()]
+        return None
+
+    date_c = col("date", "posted date", "post date", "transaction date")
+    bal_c = col("balance", "running balance", "ledger balance", "ending balance")
+    ref_c = col("ref", "reference")
+    if not date_c or not bal_c or not ref_c:
+        raise ValueError(
+            f"{path.name} must include date, balance, and ref (or reference) columns "
+            f"(found columns: {list(df.columns)})"
+        )
+
+    key = df[ref_c].astype(str).str.strip()
+    key = key.mask(key.str.lower().eq("nan"), "")
+
+    out = pd.DataFrame(
+        {
+            "_bal_merge_date": _parse_to_normalized_calendar_dates(df[date_c]),
+            "_bal_merge_key": key,
+            "input_balance": pd.to_numeric(df[bal_c], errors="coerce"),
+        }
+    )
+    out = out.dropna(subset=["_bal_merge_date"])
+    out = out[out["_bal_merge_key"].ne("")]
+    out = out.drop_duplicates(subset=["_bal_merge_date", "_bal_merge_key"], keep="last")
+    return out
+
+
+def apply_bmo_daily_balance_running_balance(
+    combined_df: pd.DataFrame,
+    raw_folder: Path,
+    daily_balance_file: str = "bmoDailyBalance.csv",
+) -> pd.DataFrame:
+    """
+    After stack + dedupe: left-join ``input_balance`` from daily balance on
+    ``(transaction_date, description) == (date, ref)`` for **all** banks, then compute
+    ``running_balance`` in global sort order (date, bank_source, row key).
+    """
+    # This function now only reads the CSV and returns it as a DataFrame.
+    path = Path(raw_folder) / daily_balance_file
+    if not path.is_file():
+        raise FileNotFoundError(f"{path} does not exist.")
+    return pd.read_csv(path, encoding="utf-8-sig")
+
+
 def calculate_monthly_transaction_counts(df: pd.DataFrame) -> Dict[str, int]:
     """
     Calculate monthly transaction counts from the dataframe.
@@ -321,8 +470,10 @@ def process_bank_transactions(
     perform_dq_checks: bool = True,
     verbose: bool = True,
     deduplicate: bool = True,
-    deduplicate_keep: str = 'first'
-) -> Tuple[pd.DataFrame, Dict[str, any]]:
+    deduplicate_keep: str = 'first',
+    raw_folder: Optional[Path] = None,
+    bmo_daily_balance_file: str = "bmoDailyBalance.csv",
+) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
     Main function to join bank transactions and perform data quality checks.
 
@@ -333,6 +484,9 @@ def process_bank_transactions(
         verbose: Whether to print DQ check results
         deduplicate: Whether to remove duplicate rows (default: True)
         deduplicate_keep: Which duplicates to keep - 'first', 'last', or False (drop all)
+        raw_folder: If set, load ``bmo_daily_balance_file`` from this folder after dedupe
+            to add ``input_balance`` (join) and ``running_balance`` (all rows).
+        bmo_daily_balance_file: CSV name under ``raw_folder`` (default: bmoDailyBalance.csv).
 
     Returns:
         Tuple of (combined_dataframe, dq_results_dict)
@@ -348,11 +502,13 @@ def process_bank_transactions(
     # Deduplicate if requested
     duplicates_removed = 0
     if deduplicate:
-        combined_df, duplicates_removed = deduplicate_transactions(combined_df, keep=deduplicate_keep)
+        deduped_df = deduplicate_transactions_with_tracing(combined_df, trace=True)
+        duplicates_removed = len(combined_df) - len(deduped_df)
+        combined_df = deduped_df
         dq_results['deduplication'] = {
             'duplicates_removed': duplicates_removed,
             'deduplication_applied': True,
-            'keep_strategy': deduplicate_keep,
+            'keep_strategy': 'oldest_by_file_creation',
             'final_record_count': len(combined_df)
         }
     else:
@@ -365,6 +521,22 @@ def process_bank_transactions(
     # Update total records count after deduplication
     if 'deduplication' in dq_results:
         dq_results['total_records_after_dedup'] = len(combined_df)
+
+    if raw_folder is not None:
+        bal_path = Path(raw_folder) / bmo_daily_balance_file
+        bmo_daily_balance_df = apply_bmo_daily_balance_running_balance(
+            combined_df,  # argument is ignored in new version
+            Path(raw_folder),
+            daily_balance_file=bmo_daily_balance_file,
+        )
+        dq_results["bmo_daily_balance"] = {
+            "applied": bal_path.is_file(),
+            "raw_folder": str(raw_folder),
+            "file": bmo_daily_balance_file,
+            "row_count": len(bmo_daily_balance_df) if bal_path.is_file() else 0,
+        }
+    else:
+        dq_results["bmo_daily_balance"] = {"applied": False}
 
     # Calculate monthly transaction counts on deduplicated dataframe
     monthly_counts = calculate_monthly_transaction_counts(combined_df)
@@ -441,6 +613,14 @@ def process_bank_transactions(
                 print("\n--- ERRORS ---")
                 for error in dq_results['errors']:
                     print(f"  ✗ {error}")
+
+            bal_info = dq_results.get("bmo_daily_balance", {})
+            if bal_info.get("raw_folder"):
+                print("\n--- BMO daily balance (input_balance / running_balance) ---")
+                if bal_info.get("applied"):
+                    print(f"  Rows with input_balance (date + description == date + ref): {bal_info.get('matched_rows', 0):,}")
+                else:
+                    print(f"  Skipped (file not found: {bal_info.get('file', '')})")
 
             print("\n" + "=" * 60)
 

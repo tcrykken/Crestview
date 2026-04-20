@@ -1,3 +1,4 @@
+from rental_analytics.data_access.transaction_categorization import combine_crosswalks, categorize_transactions_df
 """P&L pipeline entrypoint.
 
 This pipeline:
@@ -36,18 +37,83 @@ def run() -> None:
     print("STEP 1: Loading raw bank transaction files")
     print("="*70)
     bmo_df, botw_df = load_raw_bank_files()
+    # debug
+    print(f"BMO df:")
+    print(f"BMO df, raw source file creation dates: {bmo_df['raw_source_file_created_date'].unique()}")
+    print(f"BotW df, raw source file names: {botw_df['raw_source_file'].unique()}")
+    print(f"BotW df, raw source file creation dates: {botw_df['raw_source_file_created_date'].unique()}")
     
     # Step 2: Process and combine bank transactions
     print("\n" + "="*70)
     print("STEP 2: Processing and combining bank transactions")
     print("="*70)
+    # debug, delete, check bmo_df and botw_df columns
+    print(f"\pnl pipeline - BMO df columns: {bmo_df.columns.tolist()}")
+    print(f"\pnl pipeline - BotW df columns: {botw_df.columns.tolist()}")
     combined_bank_df, dq_results = process_bank_transactions(
         bmo_df=bmo_df,
         botw_df=botw_df,
         perform_dq_checks=True,
         verbose=True,
-        deduplicate=True
+        deduplicate=True,
+        raw_folder=project_root / "data" / "Raw",
     )
+
+    # Step 2b: Categorize transactions using crosswalks (prefer finalized_crosswalk.csv if exists)
+    print("\n" + "="*70)
+    print("STEP 2b: Categorizing transactions using crosswalks (with finalized crosswalk support)")
+    print("="*70)
+    from rental_analytics.data_access.transaction_categorization import (
+        combine_crosswalks, categorize_transactions_df, interactively_categorize_unknowns, export_finalized_crosswalk
+    )
+    import os
+    output_crosswalk_path = project_root / 'data' / 'output' / 'finalized_crosswalk.csv'
+    if output_crosswalk_path.exists():
+        print(f"Loading crosswalk from {output_crosswalk_path}")
+        crosswalks_df = pd.read_csv(output_crosswalk_path)
+        # If bank_source missing, add default
+        if 'bank_source' not in crosswalks_df.columns:
+            crosswalks_df['bank_source'] = 'UNKNOWN'
+    else:
+        print("No finalized_crosswalk.csv found, loading from Reference crosswalks.")
+        crosswalks_df = combine_crosswalks()
+
+    combined_bank_df = categorize_transactions_df(
+        combined_bank_df,
+        description_col='description',
+        bank_source_col='bank_source',
+        crosswalks_df=crosswalks_df
+    )
+    print(f"Sample categorized transactions:\n{combined_bank_df[['description','category']].head()}")
+
+    # Check for unknowns and prompt user to categorize if any
+    unknowns = combined_bank_df[combined_bank_df['category'].isna() | (combined_bank_df['category'] == '')]
+    if not unknowns.empty:
+        print(f"\nFound {len(unknowns)} transactions with unknown categories.\nLaunching interactive categorization tool...")
+        # Prompt user to categorize unknowns interactively
+        updated_crosswalk = interactively_categorize_unknowns(
+            combined_bank_df,
+            description_col='description',
+            bank_source_col='bank_source',
+            category_col='category',
+            crosswalks_df=crosswalks_df,
+            auto_save=True,
+            show_existing_categories=True
+        )
+        # Save updated crosswalk
+        export_finalized_crosswalk(updated_crosswalk, include_bank_source=True)
+        # Re-categorize with updated crosswalk
+        print("Re-categorizing transactions with updated crosswalk...")
+        combined_bank_df = categorize_transactions_df(
+            combined_bank_df,
+            description_col='description',
+            bank_source_col='bank_source',
+            crosswalks_df=updated_crosswalk
+        )
+        print(f"Sample after re-categorization:\n{combined_bank_df[['description','category']].head()}")
+    # print(f"Combined bank df, raw source file names: {combined_bank_df['raw_source_file'].unique()}")
+    # print(f"Combined bank df, raw source file creation dates: {combined_bank_df['raw_source_file_create_date'].unique()}")
+
     
     # Step 3: Save combined bank transactions to Staging
     bank_staging_file = staging_dir / 'combined_bank_transactions.csv'

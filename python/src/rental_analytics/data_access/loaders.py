@@ -3,7 +3,10 @@
 import pandas as pd
 from pathlib import Path
 
-from rental_analytics.utilities.dates import normalize_date_columns_from_config
+from rental_analytics.utilities.dates import (
+    normalize_date_columns_from_config,
+    raw_file_creation_date,
+)
 
 
 def load_staged_data():
@@ -78,10 +81,10 @@ def load_raw_bank_files():
     all_raw_csvs = list(raw_dir.glob("*.csv"))
 
     # Discover BMO files (case-insensitive: BMO, bmo, Bmo_..., etc.)
-    bmo_paths = sorted(p for p in all_raw_csvs if p.name.upper().startswith("BMO"))
+    bmo_paths = sorted(p for p in all_raw_csvs if p.name.upper().startswith("BMO_"))
     if not bmo_paths:
         raise FileNotFoundError(
-            f"No BMO CSV files found in {raw_dir}. Expecting files matching BMO*.csv"
+            f"No BMO CSV files found in {raw_dir}. Expecting files matching BMO_*.csv"
         )
 
     bmo_dfs = []
@@ -91,6 +94,7 @@ def load_raw_bank_files():
         except Exception as e:
             raise RuntimeError(f"Failed to load CSV from {bmo_file_path}: {e}") from e
         df["raw_source_file"] = bmo_file_path.name
+        df["raw_source_file_created_date"] = raw_file_creation_date(bmo_file_path)
         df = normalize_date_columns_from_config(
             df,
             config={
@@ -124,6 +128,7 @@ def load_raw_bank_files():
         except Exception as e:
             raise RuntimeError(f"Failed to load CSV from {botw_file_path}: {e}") from e
         df["raw_source_file"] = botw_file_path.name
+        df["raw_source_file_created_date"] = raw_file_creation_date(botw_file_path)
         df = normalize_date_columns_from_config(
             df,
             config={
@@ -140,6 +145,10 @@ def load_raw_bank_files():
         botw_dfs.append(df)
 
     botw_df = pd.concat(botw_dfs, axis=0, ignore_index=True, sort=False)
+
+    # debug, remove, check columns in bmo_df and botw_df
+    print(f"\n load_raw_bank_files - BMO df columns: {bmo_df.columns.tolist()}")
+    print(f"load_raw_bank_files - BotW df columns: {botw_df.columns.tolist()}")
 
     return bmo_df, botw_df
 

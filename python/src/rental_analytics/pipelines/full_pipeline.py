@@ -33,7 +33,7 @@ def run() -> None:
     load_union_ABBexp(local_raw_folder=raw_folder,file_patterns=['airbnb_t*', 'airbnb_tax*'])
 
     print("\n" + "=" * 70)
-    print("STEP 1+: Running bank processing and P&L pipeline")
+    print("STEP 1+: Running bank processing and P&L pipeline (with categorization)")
     print("=" * 70)
     run_pnl_pipeline()
 

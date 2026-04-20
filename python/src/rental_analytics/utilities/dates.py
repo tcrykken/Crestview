@@ -1,8 +1,31 @@
 from __future__ import annotations
 
+import os
+from datetime import datetime
+from pathlib import Path
 from typing import Iterable, Mapping, Any
 
 import pandas as pd
+
+
+def raw_file_creation_date(path: Path | str) -> str:
+    """
+    Return the file creation date from filesystem metadata as YYYY-MM-DD.
+
+    Uses ``st_birthtime`` on macOS/BSD when present; ``st_ctime`` on Windows
+    (creation time); otherwise ``st_mtime`` (last modification) as a fallback
+    where birth time is unavailable (e.g. many Linux filesystems).
+    """
+    resolved = Path(path).resolve()
+    st = resolved.stat()
+    birth = getattr(st, "st_birthtime", None)
+    if birth is not None:
+        ts = birth
+    elif os.name == "nt":
+        ts = st.st_ctime
+    else:
+        ts = st.st_mtime
+    return datetime.fromtimestamp(ts).date().isoformat()
 
 
 def normalize_date_columns(
